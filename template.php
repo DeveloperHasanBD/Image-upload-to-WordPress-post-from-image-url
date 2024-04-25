@@ -4,49 +4,131 @@
  * template name: Image upload
  */
 
-// Include WordPress core files for media handling
-require_once(ABSPATH . 'wp-admin/includes/media.php');
-require_once(ABSPATH . 'wp-admin/includes/file.php');
-require_once(ABSPATH . 'wp-admin/includes/image.php');
 
-// Specify the external image URL
-$image_url = 'https://safety.it/wp-content/uploads/2022/09/18920_2020_400x400.jpg';
 
-// Get the post ID to which you want to attach the image
-$post_id = 8; // Replace with the ID of the post
+function upload_image_from_url_to_post($image_url, $post_id)
+{
+	// Check if the image already exists in the media library.
+	$image_name = basename($image_url);
+	$existing_attachment = get_page_by_title($image_name, 'OBJECT', 'attachment');
 
-// Check if the post ID exists and is valid
-if ($post_id && get_post_status($post_id)) {
-    // Check if an attachment with the same URL already exists in the media library
-    $existing_attachment_id = attachment_url_to_postid($image_url);
+	// If the image already exists, return its ID.
+	if ($existing_attachment) {
+		return $existing_attachment->ID;
+	}
 
-    // If an existing attachment is found, use its ID
-    if ($existing_attachment_id) {
-        // Attach the existing image to the post
-        set_post_thumbnail($post_id, $existing_attachment_id);
-        echo 'Existing image attached to the post successfully!';
-    } else {
-        // Download the image from the external URL
-        $image_data = file_get_contents($image_url);
+	// If the image doesn't exist, download and upload it to the media library.
+	$image_data = file_get_contents($image_url);
+	if ($image_data) {
+		$upload_dir = wp_upload_dir();
+		$upload_path = $upload_dir['path'] . '/' . $image_name;
+		$upload_file = file_put_contents($upload_path, $image_data);
 
-        // Check if the image data was fetched successfully
-        if ($image_data !== false) {
-            // Upload the image to the media library and attach to the post
-            $attachment_id = media_sideload_image($image_url, $post_id, '', 'id');
+		// Check if the image was successfully uploaded.
+		if ($upload_file) {
+			$wp_filetype = wp_check_filetype($upload_path, null);
+			$attachment = array(
+				'post_mime_type' => $wp_filetype['type'],
+				'post_title' => sanitize_file_name($image_name),
+				'post_content' => '',
+				'post_status' => 'inherit'
+			);
+			$attachment_id = wp_insert_attachment($attachment, $upload_path, $post_id);
+			if (!is_wp_error($attachment_id)) {
+				require_once(ABSPATH . 'wp-admin/includes/image.php');
+				$attachment_data = wp_generate_attachment_metadata($attachment_id, $upload_path);
+				wp_update_attachment_metadata($attachment_id, $attachment_data);
+				return $attachment_id;
+			}
+		}
+	}
 
-            // Check if the attachment ID is not a WP_Error object
-            if (!is_wp_error($attachment_id)) {
-                // Set the image as the featured image (post thumbnail)
-                set_post_thumbnail($post_id, $attachment_id);
-                echo 'New image uploaded and attached to the post!';
-            } else {
-                echo 'Error uploading image: ' . $attachment_id->get_error_message();
-            }
-        } else {
-            echo 'Failed to fetch the image data from the URL.';
-        }
-    }
-} else {
-    echo 'Invalid post ID or post does not exist.';
+	return false;
 }
+
+function upload_images_to_posts($image_urls, $post_ids)
+{
+	foreach ($post_ids as $post_id) {
+		$gallery_ids = array();
+		foreach ($image_urls as $image_url) {
+			$attachment_id = upload_image_from_url_to_post($image_url, $post_id);
+			if ($attachment_id) {
+				$gallery_ids[] = $attachment_id;
+			} else {
+				// echo "Failed to upload image from URL $image_url to post ID $post_id.\n";
+			}
+		}
+		// Update post meta with the array of attachment IDs for the gallery
+		update_post_meta($post_id, 'aptsm_gallery', $gallery_ids);
+	}
+}
+
+// fetch csv data processing 
+function fetch_csv_data($url)
+{
+	$csv_data_array = array();
+
+	if (($handle = fopen($url, "r")) !== FALSE) {
+		while (($data = fgetcsv($handle, 1000, ",")) !== FALSE) {
+			$csv_data_array[] = $data;
+		}
+		fclose($handle);
+	} else {
+		die("Error opening CSV file");
+	}
+
+	return $csv_data_array;
+}
+
+// Call the function to fetch CSV data
+$csv_url = 'https://rodarealestatecomo.com/csvinfo/test-csv-pro.csv';
+$csv_data = fetch_csv_data($csv_url);
+
+// Output the CSV data
+foreach ($csv_data as $single_data) {
+	$pro_title = $single_data[0] ?? '';
+	$product_gall = [];
+	$product_gall[] = 'https://rodarealestatecomo.com/csvinfo/images/' . $single_data[15] ?? '';
+	$product_gall[] = 'https://rodarealestatecomo.com/csvinfo/images/' . $single_data[16] ?? '';
+	$product_gall[] = 'https://rodarealestatecomo.com/csvinfo/images/' . $single_data[17] ?? '';
+	$product_gall[] = 'https://rodarealestatecomo.com/csvinfo/images/' . $single_data[22] ?? '';
+	$product_gall[] = 'https://rodarealestatecomo.com/csvinfo/images/' . $single_data[23] ?? '';
+	$product_gall[] = 'https://rodarealestatecomo.com/csvinfo/images/' . $single_data[24] ?? '';
+
+
+	$title_to_check = $pro_title;
+	$args = array(
+		'post_type' => 'apartment',
+		'post_status' => 'publish',
+		'posts_per_page' => 1,
+		'title' => $title_to_check
+	);
+
+	$query = new WP_Query($args);
+
+	if ($query->have_posts()) {
+		while ($query->have_posts()) {
+			$query->the_post();
+			$post_ID = get_the_ID();
+
+			$post_ids = array($post_ID);
+			upload_images_to_posts($product_gall, $post_ids);
+		}
+	} else {
+
+		$new_apart = array(
+			'post_title'    => $pro_title,
+			'post_status'   => 'publish',
+			'post_type'     => 'apartment',
+		);
+
+		$post_id = wp_insert_post($new_apart);
+		$post_ids = array($post_id);
+		upload_images_to_posts($product_gall, $post_ids);
+	}
+
+	wp_reset_query();
+
+}
+
 ?>
